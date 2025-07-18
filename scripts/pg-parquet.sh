@@ -19,7 +19,7 @@ echo "$PG_ATTACH" >> $SQL_FILE
 for table in "${TABLE_ARRAY[@]}"; do
 	file="${LOCAL_DIR}/${table}.parquet"
 	if [ -f $file ]; then
-		rm -f $file
+		continue
 	fi
 	echo "COPY osf.${table} TO '${file}';" >> $SQL_FILE
 done

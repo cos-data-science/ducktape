@@ -5,7 +5,8 @@
 source ./runparams.sh
 
 # Control variables
-RUN_PURGE=1
+RUN_PURGEDB=1
+RUN_PURGEPQ=0
 RUN_TABLESET=1
 RUN_EXPORT=1
 RUN_GETKEYS=1
@@ -15,24 +16,29 @@ RUN_CREATEDB=1
 
 
 # PIPELINE ---------------------------------------------------------------------
-# Make directories
-mkdir -p $OSFDATA
-mkdir -p $PGDIR
+# Staging Files and Directories
+mkdir -p $PARQUETDIR
 
-if [ $RUN_PURGE == 1 ]; then
-	echo "Purging previous data (parquet files and database)..."
-	if [ -d $PGDIR ]; then
-		rm -fr $PGDIR
-		mkdir -p $PGDIR
-	fi
+if [ $RUN_PURGEDB == 1 ]; then
+	echo "Purging previous data DuckDB"
 	if [ -d $DBPATH ]; then
 		rm -fr $DBPATH
 	fi
 fi
 
+if [ $RUN_PURGEPQ == 1 ]; then
+	echo "Purging previous Parquet files"
+	if [ -d $PARQUETDIR ]; then
+		rm -fr $PARQUETDIR
+		mkdir -p $PARQUETDIR
+	fi
+fi
+
+
+# Subset Tables to Export/Convert
 if [ $RUN_TABLESET == 1 ]; then
 	echo "Selecting tables of interest..."
-	if [ $TABLE_SOURCE == "EXPLICIT" ]; then
+	if [ $TABLE_METHOD == "EXPLICIT" ]; then
 		echo "Using EXPLICIT method to define tables..."
 		DBTABLES=${TABLES_EXPLICIT[@]}
 	else
@@ -45,10 +51,20 @@ if [ $RUN_TABLESET == 1 ]; then
 	fi
 fi
 
+
+# Parquet Exports
 if [ $RUN_EXPORT == 1 ]; then 
 	echo "Exporting tables to individual Parquet files..."
-	./scripts/pg-parquet.sh pg-to-parquet.sql $PGDIR ${DBTABLES[@]}
+	./scripts/pg-parquet.sh pg-to-parquet.sql $PARQUETDIR ${DBTABLES[@]}
 	duckdb < pg-to-parquet.sql
+fi
+
+
+# Extract Relational Keys and Create DuckDB
+if [ $RUN_CREATEDB == 1 ]; then
+	echo "Writing Parquet files to DuckDB..."
+	./scripts/parquet-duck.sh parquet-to-duck.sql $PARQUETDIR $DBPATH ${DBTABLES[@]}
+	duckdb < parquet-to-duck.sql
 fi
 
 if [ $RUN_GETKEYS == 1 ]; then
@@ -56,14 +72,11 @@ if [ $RUN_GETKEYS == 1 ]; then
 	./scripts/get-keys.r $KEYPATH ${DBTABLES[@]} 
 fi
 
-if [ $RUN_CREATEDB == 1 ]; then
-	echo "Writing Parquet files to DuckDB..."
-	./scripts/parquet-duck.sh parquet-to-duck.sql $PGDIR $DBPATH ${DBTABLES[@]}
-	duckdb < parquet-to-duck.sql
-fi
 
 # Cleanup
 rm -f pg-to-parquet.sql parquet-to-duck.sql tables.txt
+
+
 
 
 # IN DEVELOPMENT --------------------------------------------------------------

@@ -6,6 +6,7 @@
 #
 # - $HOME/osfdata             - Top-level data directory
 #   - $HOME/osfdata/pg        - PostgreSQL backup files
+#   - $HOME/osfdata/parquet   - Parquet files
 #   - $HOME/osfdata/osf.db    - DuckDB database
 #   - $HOME/osfdata/keys.rds  - PostgreSQL keyfile
 #
@@ -25,7 +26,8 @@
 OSFDATA="${HOME}/osfdata"
 DBPATH="${OSFDATA}/osf.db"
 KEYPATH="${OSFDATA}/keys.rds"
-PGDIR="${OSFDATA}/pg"
+PGDATA="${OSFDATA}/pg"
+PARQUETDIR="${OSFDATA}/parquet"
 
 # Tables of interest
 TABLES_REGEX="^osf"
@@ -35,4 +37,4 @@ TABLES_EXPLICIT=(\
 	"osf_preprint" "osf_preprintlog" "osf_preprintrequestaction" \
 	"osf_guid" "osf_basefilenode" "osf_pagecounter"
 )
-TABLE_METHOD="EXPLICIT"  #must be "REGEX" or "EXPLICIT"
+TABLE_METHOD="REGEX"  #must be "REGEX" or "EXPLICIT"

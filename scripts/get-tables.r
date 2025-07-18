@@ -2,6 +2,7 @@
 source(here::here(".Rprofile"))
 
 # Load modules
+library(dbplyr)
 box::use(
   ./src/helpers[pg_connect],
 )
