@@ -1,9 +1,5 @@
-# Directories
-data
-dev
-
-# Files
-.env
 *.sql
 *.txt
 .DS_Store
+
+!get-tables.sql

@@ -1,4 +1,2 @@
 source("renv/activate.R")
-
-dotenv::load_dot_env()
-options(box.path = here::here())
+options(renv.config.pak.enabled = TRUE) #Use `pak` for package management
