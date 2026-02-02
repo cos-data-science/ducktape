@@ -6,6 +6,7 @@ A pipeline for simplifying your work with the OSF database backups using a motle
 
 1. A properly staged PostgreSQL backup for local use
 2. `duckdb` installed and configured for command-line use
+3. `rclone` installed and configured for access to COS Google Drive (Google Drive documentation [here](https://rclone.org/drive/))
 
 ## Usage
 
@@ -16,5 +17,5 @@ A pipeline for simplifying your work with the OSF database backups using a motle
 To invoke the pipeline, run `./run.sh` from the project root directory in a terminal:
 
 ```
-youruser@yourhost ~/ducktales $ ./run.sh
+youruser@yourhost ~/ducktape $ ./run.sh
 ```
