@@ -1,5 +1,5 @@
 #!/usr/local/bin/Rscript --vanilla
-#source(here::here(".Rprofile"))
+source(here::here(".Rprofile"))
 
 # Capture and parse arguments
 ARGS <- commandArgs(trailingOnly = TRUE)
@@ -26,3 +26,6 @@ keys <- list(
 
 # Save
 saveRDS(keys, file = OUTFILE)
+
+# Close connection
+DBI::dbDisconnect(db_pg)
