@@ -3,4 +3,8 @@
 .DS_Store
 
 !get-tables.sql
+!example-queries.sql
 logs/
+
+# User-specific configuration (use config.template.sh as base)
+config.sh
