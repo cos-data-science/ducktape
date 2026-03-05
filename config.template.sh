@@ -40,6 +40,28 @@ KEYS_PATH="$HOME/osfdata/keys.rds"
 GPATH="cos-gdrive:/data-science-warehouse/OSF Backups"
 
 
+# TABLE SELECTION --------------------------------------------------------------
+# Specify a subset of tables to export. If empty, ALL tables are exported.
+# Use table names as they appear in tables.txt (without schema prefix).
+# Default: tables used by cosr::open_parquet()
+EXPORT_TABLES=(
+    # Core tables
+    "osf_abstractnode"
+    "osf_guid"
+    "osf_osfuser"
+    # Relationship/junction tables
+    "osf_abstractnode_subjects"
+    "osf_nodelog"
+    # Attribute/metadata tables
+    "osf_guidmetadatarecord"
+    "osf_institution"
+    "osf_subject"
+    "osf_registrationschema"
+    "osf_abstractprovider"
+    "osf_outcomeartifact"
+)
+
+
 # WORKFLOW OPTIONS -------------------------------------------------------------
 # Set to 1 to enable, 0 to disable each workflow stage
 

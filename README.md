@@ -9,7 +9,7 @@ A pipeline for simplifying your work with the OSF database backups using a motle
 ```
 PostgreSQL Backup → Extract Tables → Parquet Files → DuckDB Database
                          ↓               ↓              ↓
-                    tables.txt    100+ .parquet    osf.db (ready!)
+                    tables.txt      .parquet files   osf.db (ready!)
 ```
 
 **Key Benefits:**
@@ -109,7 +109,7 @@ cp config.template.sh config.sh
 nano config.sh  # or vim, code, etc.
 ```
 
-The config file has well-documented settings for all paths and options. See [SETUP.md](SETUP.md) for detailed configuration instructions.
+The config file has well-documented settings for all paths and options.
 
 <details>
 <summary>Alternative: Edit run.sh directly (click to expand)</summary>
@@ -140,7 +140,7 @@ export DUCKDB_PATH="$(pwd)/data/osf.db"
 
 ### 3. Configure Runtime Options
 
-Set which workflows to run (lines 12-15 in `run.sh`):
+Set which workflows to run in `config.sh`:
 
 ```bash
 RUN_CLEAN_SLATE=0          # Set to 1 to delete existing files (CAREFUL!)
@@ -151,6 +151,42 @@ RUN_DUCKDB_WORKFLOW=1      # Import Parquet files into DuckDB
 
 **First-time setup:** Set all to `1` except `RUN_CLEAN_SLATE`  
 **Incremental updates:** Enable only the workflows you need
+
+### 3b. Table Selection
+
+By default, `ducktape` exports a **subset of 11 commonly used tables** defined in the `EXPORT_TABLES` array in `config.sh`:
+
+```bash
+# Default tables exported (from config.sh)
+EXPORT_TABLES=(
+    "osf_abstractnode"
+    "osf_guid"
+    "osf_osfuser"
+    "osf_abstractnode_subjects"
+    "osf_nodelog"
+    "osf_guidmetadatarecord"
+    "osf_institution"
+    "osf_subject"
+    "osf_registrationschema"
+    "osf_abstractprovider"
+    "osf_outcomeartifact"
+)
+```
+
+You can edit this list to include any tables you need. When `EXPORT_TABLES` is set:
+
+- **Parquet export:** Only the named tables are exported as `.parquet` files
+- **DuckDB import:** Only the named tables are created in the DuckDB database
+- **Relational keys:** `keys.rds` is filtered to only include primary keys for the named tables, and foreign keys where **both** parent and child tables are in the subset
+- **Validation:** The pipeline warns if any names in `EXPORT_TABLES` don't match actual database tables
+
+To export **all** tables instead, set the array to empty:
+
+```bash
+EXPORT_TABLES=()
+```
+
+Table names should match what appears in `tables.txt` (without the `osf.` schema prefix).
 
 ### 4. Run the Pipeline
 
@@ -200,27 +236,27 @@ LIMIT 10;
 
 **Steps:**
 
-1. Queries PostgreSQL for all table names → `src/tables.txt`
+1. Queries PostgreSQL for all table names → `tables.txt`
 2. Extracts primary/foreign keys → `keys.rds`
 3. Generates SQL export commands → `pg-to-parquet.sql`
 4. Uploads metadata to Google Drive
 
 **Output Files:**
 
-- `src/tables.txt`: List of all database tables
+- `tables.txt`: List of all database tables
 - `keys.rds`: R object containing relational structure
 - `pg-to-parquet.sql`: Generated COPY commands for Parquet export
 
 ### Workflow 2: Parquet (Data Export)
 
-**Purpose:** Export all PostgreSQL tables to Parquet format
+**Purpose:** Export PostgreSQL tables to Parquet format (selected tables or all)
 
 **Steps:**
 1. Executes `pg-to-parquet.sql` against PostgreSQL
 2. Creates one `.parquet` file per table in `PARQUET_DIR`
 3. Uploads Parquet files to Google Drive
 
-**Output:** 100+ individual `.parquet` files (one per table)
+**Output:** Individual `.parquet` files (one per exported table)
 
 ### Workflow 3: DuckDB (Database Creation)
 
@@ -240,23 +276,35 @@ LIMIT 10;
 ```
 ducktape/
 ├── run.sh                   # Main pipeline orchestrator
+├── config.sh                # Your local configuration (git-ignored)
+├── config.template.sh       # Configuration template
 ├── README.md                # This file
 ├── renv.lock                # R package dependencies
 ├── .Rprofile                # R environment config
+├── .gitignore
 │
 ├── src/                     # Source code
-│   ├── get-keys.r          # Extract relational keys from PostgreSQL
-│   ├── get-tables.sql      # SQL to list all tables
-│   └── tables.txt          # Generated: List of tables
+│   ├── get-keys.r           # Extract relational keys from PostgreSQL
+│   └── get-tables.sql       # SQL to list all tables
 │
-├── data/                    # Working directory (create this!)
-│   ├── pg/                 # PostgreSQL backup location
-│   ├── parquet/            # Parquet files output
-│   └── osf.db              # Final DuckDB database
+├── scripts/                 # Helper scripts
+│   ├── setup.sh             # Interactive setup wizard
+│   ├── check-status.sh      # Check pipeline progress
+│   ├── verify-data.sh       # Verify data integrity
+│   ├── clean.sh             # Safely clean up files
+│   ├── query.sh             # Interactive DuckDB query tool
+│   ├── utils.sh             # Shared utility functions
+│   └── README.md            # Helper script documentation
 │
 ├── logs/                    # Pipeline execution logs
 │
-└── renv/                    # R environment (managed by renv)
+├── renv/                    # R environment (managed by renv)
+│
+│── (Generated at runtime) ──
+├── tables.txt               # List of database tables
+├── pg-to-parquet.sql        # Generated COPY commands
+├── parquet-to-duck.sql      # Generated DuckDB import SQL
+└── DB_VERSION.txt           # Database backup timestamp
 ```
 
 ---
@@ -266,10 +314,12 @@ ducktape/
 ### Example 1: First-Time Full Pipeline
 
 ```bash
-# Configure paths in run.sh
-vim run.sh  # Set PG_DIR, PARQUET_DIR, DUCKDB_PATH
+# Configure paths in config.sh
+cp config.template.sh config.sh
+vim config.sh  # Set PG_DIR, PARQUET_DIR, DUCKDB_PATH, etc.
 
-# Run everything
+# Enable all workflows
+# In config.sh, set:
 RUN_CLEAN_SLATE=0
 RUN_PG_WORKFLOW=1
 RUN_PARQUET_WORKFLOW=1
@@ -291,15 +341,29 @@ RUN_DUCKDB_WORKFLOW=1
 ./run.sh
 ```
 
-### Example 3: Skip Google Drive Uploads
+### Example 3: Export All Tables
 
-Comment out the `rclone` lines in `run.sh`:
+The default configuration exports only 11 core tables. To export the entire database instead:
 
 ```bash
-# Line ~80-85: Comment out
-# rclone copy "${KEYS_PATH}" "${GPATH}"
-# rclone copy "${PARQUET_DIR}" "${GPATH}/parquet" --progress
-# rclone copy "${DUCKDB_PATH}" "${GPATH}"
+# In config.sh, set:
+EXPORT_TABLES=()
+RUN_PG_WORKFLOW=1
+RUN_PARQUET_WORKFLOW=1
+RUN_DUCKDB_WORKFLOW=1
+
+./run.sh
+```
+
+This exports all 100+ tables. Note that this requires significantly more disk space and time.
+
+### Example 4: Skip Google Drive Uploads
+
+Set the upload flag in `config.sh`:
+
+```bash
+# In config.sh, set:
+UPLOAD_TO_GDRIVE=0
 ```
 
 ---
@@ -461,10 +525,10 @@ chmod +x run.sh
 
 Contributions are welcome! Areas for improvement:
 
-- [ ] Add configuration file (avoid editing `run.sh`)
+- [x] Add configuration file (avoid editing `run.sh`)
+- [x] Add data validation checks
+- [x] Create progress indicators
 - [ ] Implement dry-run mode
-- [ ] Add data validation checks
-- [ ] Create progress indicators
 - [ ] Support other cloud storage backends
 - [ ] Add automated tests
 
@@ -490,8 +554,11 @@ A: Depends on your PostgreSQL backup frequency. Re-run when you have a new backu
 **Q: Can I use this with other databases besides OSF?**  
 A: Yes! Modify the SQL queries and table extraction logic for your schema.
 
+**Q: Can I export only some tables instead of everything?**  
+A: Yes — in fact, the default configuration exports only 11 core tables. Edit the `EXPORT_TABLES` array in `config.sh` to customize which tables are exported. Set it to an empty array `()` to export all tables.
+
 **Q: What if I don't have Google Drive?**  
-A: Simply comment out the `rclone` commands in `run.sh` - local processing will still work.
+A: Set `UPLOAD_TO_GDRIVE=0` in `config.sh` — local processing will still work.
 
 ---
 

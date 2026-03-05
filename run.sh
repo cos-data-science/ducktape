@@ -19,6 +19,11 @@ DUCKDB_PATH="${DUCKDB_PATH:-$HOME/osfdata/osf.db}"
 KEYS_PATH="${KEYS_PATH:-$HOME/osfdata/keys.rds}"
 GPATH="${GPATH:-cos-gdrive:/data-science-warehouse/OSF Backups}"
 
+# Table selection (empty = all tables)
+if [ ${#EXPORT_TABLES[@]} -eq 0 ] 2>/dev/null; then
+    EXPORT_TABLES=()
+fi
+
 # Run options
 RUN_CLEAN_SLATE=${RUN_CLEAN_SLATE:-1}
 RUN_PG_WORKFLOW=${RUN_PG_WORKFLOW:-1}
@@ -246,6 +251,11 @@ else
     echo "  Parquet Workflow:    $([ "$RUN_PARQUET_WORKFLOW" = "1" ] && echo "ENABLED" || echo "disabled")"
     echo "  DuckDB Workflow:     $([ "$RUN_DUCKDB_WORKFLOW" = "1" ] && echo "ENABLED" || echo "disabled")"
     echo "  Google Drive Upload: $([ "$UPLOAD_TO_GDRIVE" = "1" ] && echo "ENABLED" || echo "disabled")"
+    if [ ${#EXPORT_TABLES[@]} -gt 0 ]; then
+        echo "  Table Selection:     ${#EXPORT_TABLES[@]} tables (subset mode)"
+    else
+        echo "  Table Selection:     ALL tables"
+    fi
     echo ""
     echo "Starting pipeline in 3 seconds... (Ctrl+C to cancel)"
     sleep 3
@@ -442,7 +452,28 @@ if [ $RUN_PG_WORKFLOW == 1 ]; then
 	
 	print_progress "Starting PostgreSQL container..."
 	docker compose -f $OSFIO_DIR/docker-compose.yml up -d postgres > /dev/null 2>&1
-	print_success "PostgreSQL container running"
+	
+	# Wait for PostgreSQL to be ready
+	print_progress "Waiting for PostgreSQL to accept connections..."
+	MAX_RETRIES=30
+	RETRY_COUNT=0
+	while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+		if docker exec $(docker compose -f $OSFIO_DIR/docker-compose.yml ps -q postgres) pg_isready -U postgres > /dev/null 2>&1; then
+			break
+		fi
+		sleep 2
+		RETRY_COUNT=$((RETRY_COUNT + 1))
+	done
+	
+	if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+		echo "  ✗ ERROR: PostgreSQL failed to start after ${MAX_RETRIES} attempts"
+		log_message "ERROR: PostgreSQL startup timeout"
+		exit 1
+	fi
+	
+	# Extra safety: wait a bit longer for full initialization
+	sleep 3
+	print_success "PostgreSQL container running and ready"
 
 	print_step "PostgreSQL - Extracting Table List"
 	
@@ -455,6 +486,39 @@ if [ $RUN_PG_WORKFLOW == 1 ]; then
 	while read line; do
 		DBTABLES+=($line)
 	done < tables.txt
+
+	# Filter to subset if EXPORT_TABLES is specified
+	if [ ${#EXPORT_TABLES[@]} -gt 0 ]; then
+		FILTERED_TABLES=()
+		MISSING_TABLES=()
+		for wanted in "${EXPORT_TABLES[@]}"; do
+			FOUND=0
+			for available in "${DBTABLES[@]}"; do
+				if [ "$wanted" = "$available" ]; then
+					FILTERED_TABLES+=("$wanted")
+					FOUND=1
+					break
+				fi
+			done
+			if [ $FOUND -eq 0 ]; then
+				MISSING_TABLES+=("$wanted")
+			fi
+		done
+
+		# Warn about any table names that don't exist
+		if [ ${#MISSING_TABLES[@]} -gt 0 ]; then
+			echo ""
+			echo "  ⚠ WARNING: The following EXPORT_TABLES were not found in the database:"
+			for missing in "${MISSING_TABLES[@]}"; do
+				echo "    - $missing"
+			done
+			log_message "WARNING: Tables not found: ${MISSING_TABLES[*]}"
+		fi
+
+		DBTABLES=("${FILTERED_TABLES[@]}")
+		print_success "Filtered to ${#DBTABLES[@]} of ${#EXPORT_TABLES[@]} requested tables"
+	fi
+
 	TABLE_COUNT=${#DBTABLES[@]}
 	print_success "Found $TABLE_COUNT tables"
 
@@ -466,19 +530,26 @@ if [ $RUN_PG_WORKFLOW == 1 ]; then
 	
 	# Loop through tables with progress bar
 	PROCESSED=0
+	SKIPPED=0
 	for table in "${DBTABLES[@]}"; do
 		# Postgres to Parquet
 		file="${PARQUET_DIR}/${table}.parquet"
-		echo "COPY osf.${table} TO '${file}';" >> pg-to-parquet.sql
 
-		# Parquet to DuckDB
+		# Skip tables already exported (non-empty parquet file exists)
+		if [ -f "$file" ] && [ -s "$file" ]; then
+			SKIPPED=$((SKIPPED + 1))
+		else
+			echo "COPY osf.${table} TO '${file}';" >> pg-to-parquet.sql
+		fi
+
+		# Parquet to DuckDB (always include; uses CREATE TABLE IF NOT EXISTS)
 		echo "CREATE TABLE IF NOT EXISTS duck.${table} AS" >> parquet-to-duck.sql
 		echo "    SELECT * FROM '${PARQUET_DIR}/${table}.parquet';" >> parquet-to-duck.sql
 		
 		PROCESSED=$((PROCESSED + 1))
 		track_progress $PROCESSED $TABLE_COUNT "Generating SQL"
 	done
-	print_success "SQL generation complete ($TABLE_COUNT tables)"
+	print_success "SQL generation complete ($TABLE_COUNT tables, $SKIPPED already exported and skipped)"
 
 	print_step "PostgreSQL - Extracting Metadata"
 	print_progress "Saving database version info..."
@@ -491,8 +562,13 @@ if [ $RUN_PG_WORKFLOW == 1 ]; then
 		fi
 	done
 
-	# Extract keys with spinner
-	./src/get-keys.r $KEYS_PATH > /dev/null 2>&1 &
+	# Extract keys with spinner (pass table list if subset mode)
+	if [ ${#EXPORT_TABLES[@]} -gt 0 ]; then
+		TABLE_LIST=$(IFS=,; echo "${DBTABLES[*]}")
+		./src/get-keys.r "$KEYS_PATH" "$TABLE_LIST" > /dev/null 2>&1 &
+	else
+		./src/get-keys.r "$KEYS_PATH" > /dev/null 2>&1 &
+	fi
 	KEYS_PID=$!
 	spinner $KEYS_PID "Extracting relational keys..."
 	wait $KEYS_PID
